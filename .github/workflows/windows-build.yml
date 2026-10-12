@@ -14,7 +14,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: windows-build-${{ github.ref }}
+  group: windows-build-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
@@ -34,12 +34,14 @@ jobs:
           rustup target add x86_64-pc-windows-msvc
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: "true"
       - name: Prepare native libraries
         run: |
           & "$env:VCPKG_INSTALLATION_ROOT/vcpkg.exe" install zlib:x64-windows-static
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $zlibDir = "$env:VCPKG_INSTALLATION_ROOT/installed/x64-windows-static/lib"
-          $zlibLibrary = @(Get-ChildItem -LiteralPath $zlibDir -Filter "*.lib" | Where-Object Name -Match "^zlib(static)?\.lib$")
+          $zlibLibrary = @(Get-ChildItem -LiteralPath $zlibDir -Filter "*.lib" | Where-Object Name -Match "^(zs|zlib|zlibstatic)\.lib$")
           if ($zlibLibrary.Count -ne 1) { throw "Expected one zlib library in $zlibDir" }
           Copy-Item -LiteralPath $zlibLibrary[0].FullName -Destination "$zlibDir/z.lib"
           "RUSTFLAGS=-L native=$zlibDir" >> $env:GITHUB_ENV
