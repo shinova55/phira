@@ -1,0 +1,99 @@
+name: iOS IPA build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [hide-autoplay-ios]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-ipa-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-14
+    timeout-minutes: 60
+    env:
+      IPHONEOS_DEPLOYMENT_TARGET: "13.0"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up toolchain
+        run: |
+          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+          xcodebuild -version
+          rustup show
+          rustup target add aarch64-apple-ios
+          touch phira/.env
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: "true"
+      - name: Restore release-only assets
+        run: |
+          curl --fail --location --retry 3 https://github.com/TeamFlos/phira/releases/download/v0.8.2/Phira-windows-x86_64-v0.8.2.zip -o "$RUNNER_TEMP/official.zip"
+          echo "7a881fd48cd156201d0b1cb700e003fb58cc01ebcfadad1e9c865d0f3282bc41  $RUNNER_TEMP/official.zip" | shasum -a 256 -c -
+          unzip -q "$RUNNER_TEMP/official.zip" 'assets/*' -d "$RUNNER_TEMP/official"
+          cp "$RUNNER_TEMP/official/assets/font.ttf" assets/font.ttf
+          cp "$RUNNER_TEMP/official/assets/background.jpg" assets/background.jpg
+          cp -R "$RUNNER_TEMP/official/assets/res" assets/res
+          test -s assets/font.ttf
+          test -s assets/res/bgm
+      - name: Check formatting
+        run: cargo fmt --all --check
+      - name: Build for iPhone and iPad
+        run: |
+          export SDKROOT="$(xcrun --sdk iphoneos --show-sdk-path)"
+          cargo build --locked --release -p phira-main --target aarch64-apple-ios
+      - name: Assemble unsigned app
+        run: |
+          mkdir -p dist/Payload/Phira.app
+          cp target/aarch64-apple-ios/release/phira-main dist/Payload/Phira.app/phira-main
+          chmod 755 dist/Payload/Phira.app/phira-main
+          cp -R assets dist/Payload/Phira.app/assets
+          cp LICENSE dist/Payload/Phira.app/LICENSE
+          xcrun actool xcode/Assets.xcassets --compile dist/Payload/Phira.app --platform iphoneos --minimum-deployment-target 13.0 --target-device iphone --target-device ipad --app-icon AppIcon --output-partial-info-plist "$RUNNER_TEMP/icon-info.plist"
+          python3 - <<'PY'
+          import os, plistlib, subprocess, tomllib
+          from pathlib import Path
+          version = tomllib.loads(Path("Cargo.toml").read_text())["workspace"]["package"]["version"]
+          info = {
+              "CFBundleDevelopmentRegion": "en",
+              "CFBundleDisplayName": "Phira",
+              "CFBundleExecutable": "phira-main",
+              "CFBundleIdentifier": "org.flos.phira",
+              "CFBundleInfoDictionaryVersion": "6.0",
+              "CFBundleName": "Phira",
+              "CFBundlePackageType": "APPL",
+              "CFBundleShortVersionString": version,
+              "CFBundleVersion": os.environ["GITHUB_RUN_NUMBER"],
+              "CFBundleSupportedPlatforms": ["iPhoneOS"],
+              "MinimumOSVersion": "13.0",
+              "LSRequiresIPhoneOS": True,
+              "UIDeviceFamily": [1, 2],
+              "UIRequiredDeviceCapabilities": ["arm64"],
+              "UIRequiresFullScreen": True,
+              "UISupportedInterfaceOrientations": ["UIInterfaceOrientationLandscapeLeft", "UIInterfaceOrientationLandscapeRight"],
+              "UILaunchScreen": {},
+              "UIFileSharingEnabled": True,
+              "LSSupportsOpeningDocumentsInPlace": True,
+              "CFBundleURLTypes": [{"CFBundleURLName": "org.flos.phira", "CFBundleURLSchemes": ["phira"]}],
+          }
+          with open(os.environ["RUNNER_TEMP"] + "/icon-info.plist", "rb") as f:
+              info.update(plistlib.load(f))
+          with open("dist/Payload/Phira.app/Info.plist", "wb") as f:
+              plistlib.dump(info, f)
+          PY
+          plutil -lint dist/Payload/Phira.app/Info.plist
+          lipo -verify_arch arm64 dist/Payload/Phira.app/phira-main
+          test -s dist/Payload/Phira.app/assets/font.ttf
+          cd dist
+          zip -qr Phira-ios-unsigned.ipa Payload
+          unzip -t Phira-ios-unsigned.ipa
+      - uses: actions/upload-artifact@v4
+        with:
+          name: phira-ios-unsigned
+          path: dist/Phira-ios-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 30
