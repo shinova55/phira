@@ -1,0 +1,77 @@
+name: Windows build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [hide-autoplay-windows]
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/windows-build.yml'
+      - 'prpr/src/scene/game.rs'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ilammy/msvc-dev-cmd@v1
+      - name: Set up Rust
+        run: |
+          rustup show
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          rustup target add x86_64-pc-windows-msvc
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: Swatinem/rust-cache@v2
+      - name: Prepare native libraries
+        run: |
+          & "$env:VCPKG_INSTALLATION_ROOT/vcpkg.exe" install zlib:x64-windows-static
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $zlibDir = "$env:VCPKG_INSTALLATION_ROOT/installed/x64-windows-static/lib"
+          Copy-Item "$zlibDir/zlib.lib" "$zlibDir/z.lib"
+          "RUSTFLAGS=-L native=$zlibDir" >> $env:GITHUB_ENV
+          $version = (Get-Content prpr-avc/ffmpeg-version -Raw).Trim()
+          $targetDir = "prpr-avc/static-lib/x86_64-pc-windows-msvc"
+          New-Item -ItemType Directory -Force $targetDir | Out-Null
+          Invoke-WebRequest "https://github.com/TeamFlos/prpr-avc-ffmpeg/releases/download/$version/x86_64-pc-windows-msvc.tar.gz" -OutFile "$env:RUNNER_TEMP/ffmpeg.tar.gz"
+          tar -xzf "$env:RUNNER_TEMP/ffmpeg.tar.gz" -C $targetDir
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          foreach ($name in @('avcodec', 'avformat', 'avutil', 'swresample', 'swscale')) {
+            Copy-Item "$targetDir/lib$name.a" "$targetDir/$name.lib"
+          }
+          Set-Content "$targetDir/.version" $version
+          New-Item -ItemType File -Force phira/.env | Out-Null
+      - name: Check formatting
+        run: cargo fmt --all --check
+      - name: Build Windows executable
+        run: cargo build --locked --release -p phira-main --target x86_64-pc-windows-msvc
+      - name: Package game
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item target/x86_64-pc-windows-msvc/release/phira-main.exe dist/phira.exe
+          Copy-Item assets dist/assets -Recurse
+          Copy-Item LICENSE dist/LICENSE
+          @"
+          Phira custom Windows build
+          Extract the entire ZIP and run phira.exe. Keep assets beside the executable.
+          Autoplay works normally, with its gameplay text hidden.
+          Source: https://github.com/shinova55/phira
+          Commit: $env:GITHUB_SHA
+          "@ | Set-Content dist/README.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: phira-windows-x64
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30
