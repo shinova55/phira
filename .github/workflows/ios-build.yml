@@ -86,7 +86,12 @@ jobs:
               plistlib.dump(info, f)
           PY
           plutil -lint dist/Payload/Phira.app/Info.plist
-          lipo -verify_arch arm64 dist/Payload/Phira.app/phira-main
+          architectures="$(lipo -archs dist/Payload/Phira.app/phira-main)"
+          echo "Binary architectures: $architectures"
+          case " $architectures " in
+            *" arm64 "*) ;;
+            *) echo "Expected arm64 in iOS executable" >&2; exit 1 ;;
+          esac
           test -s dist/Payload/Phira.app/assets/font.ttf
           cd dist
           zip -qr Phira-ios-unsigned.ipa Payload
