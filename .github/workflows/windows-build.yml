@@ -39,7 +39,9 @@ jobs:
           & "$env:VCPKG_INSTALLATION_ROOT/vcpkg.exe" install zlib:x64-windows-static
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $zlibDir = "$env:VCPKG_INSTALLATION_ROOT/installed/x64-windows-static/lib"
-          Copy-Item "$zlibDir/zlib.lib" "$zlibDir/z.lib"
+          $zlibLibrary = @(Get-ChildItem -LiteralPath $zlibDir -Filter "*.lib" | Where-Object Name -Match "^zlib(static)?\.lib$")
+          if ($zlibLibrary.Count -ne 1) { throw "Expected one zlib library in $zlibDir" }
+          Copy-Item -LiteralPath $zlibLibrary[0].FullName -Destination "$zlibDir/z.lib"
           "RUSTFLAGS=-L native=$zlibDir" >> $env:GITHUB_ENV
           $version = (Get-Content prpr-avc/ffmpeg-version -Raw).Trim()
           $targetDir = "prpr-avc/static-lib/x86_64-pc-windows-msvc"
