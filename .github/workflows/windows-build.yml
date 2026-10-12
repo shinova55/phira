@@ -60,6 +60,21 @@ jobs:
         run: cargo fmt --all --check
       - name: Build Windows executable
         run: cargo build --locked --release -p phira-main --target x86_64-pc-windows-msvc
+      - name: Include release-only runtime assets
+        run: |
+          $archive = "$env:RUNNER_TEMP/phira-official.zip"
+          Invoke-WebRequest "https://github.com/TeamFlos/phira/releases/download/v0.8.2/Phira-windows-x86_64-v0.8.2.zip" -OutFile $archive
+          if ((Get-FileHash $archive -Algorithm SHA256).Hash -ne '7A881FD48CD156201D0B1CB700E003FB58CC01EBCFADAD1E9C865D0F3282BC41') {
+            throw "Official asset archive checksum mismatch"
+          }
+          $official = "$env:RUNNER_TEMP/phira-official"
+          Expand-Archive -LiteralPath $archive -DestinationPath $official
+          Copy-Item "$official/assets/font.ttf" assets/font.ttf
+          Copy-Item "$official/assets/background.jpg" assets/background.jpg
+          Copy-Item "$official/assets/res" assets/res -Recurse
+          foreach ($required in @('assets/font.ttf', 'assets/background.jpg', 'assets/res/bgm')) {
+            if (-not (Test-Path -LiteralPath $required -PathType Leaf)) { throw "Missing runtime asset: $required" }
+          }
       - name: Package game
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
