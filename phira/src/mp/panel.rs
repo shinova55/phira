@@ -103,84 +103,6 @@ fn validate_room_chart_cache(path: &Path, digest: &str) -> Result<()> {
     validate_chart_files(path)
 }
 
-#[cfg(test)]
-mod room_cache_tests {
-    use super::*;
-    use std::io::Write;
-
-    fn archive(files: &[(&str, &[u8])]) -> Vec<u8> {
-        let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
-        for (name, bytes) in files {
-            zip.start_file(*name, zip::write::SimpleFileOptions::default()).unwrap();
-            zip.write_all(bytes).unwrap();
-        }
-        zip.finish().unwrap().into_inner()
-    }
-
-    #[test]
-    fn atomic_install_reuses_and_repairs_validated_cache() {
-        let dir = tempfile::tempdir().unwrap();
-        let bytes = archive(&[
-            ("info.yml", b"chart: chart.json\nmusic: song.mp3\nillustration: background.png\n"),
-            ("chart.json", b"{}"),
-            ("song.mp3", b"music"),
-            ("background.png", b"image"),
-        ]);
-        let digest = format!("{:x}", Sha256::digest(&bytes));
-        install_room_chart_at(dir.path(), bytes.clone(), &digest).unwrap();
-        validate_room_chart_cache(&dir.path().join(&digest), &digest).unwrap();
-        install_room_chart_at(dir.path(), bytes.clone(), &digest).unwrap();
-        fs::write(dir.path().join(&digest).join("chart.json"), b"modified").unwrap();
-        install_room_chart_at(dir.path(), bytes, &digest).unwrap();
-        validate_room_chart_cache(&dir.path().join(&digest), &digest).unwrap();
-        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
-    }
-
-    #[test]
-    fn unsafe_or_incomplete_archives_never_become_cache_entries() {
-        let dir = tempfile::tempdir().unwrap();
-        let root = dir.path().join("cache");
-        for bytes in [archive(&[("../outside", b"bad")]), archive(&[("chart.json", b"{}")])] {
-            let digest = format!("{:x}", Sha256::digest(&bytes));
-            assert!(install_room_chart_at(&root, bytes, &digest).is_err());
-            assert!(!root.join(digest).exists());
-            assert_eq!(fs::read_dir(&root).unwrap().count(), 0);
-        }
-        assert!(!dir.path().join("outside").exists());
-    }
-
-    #[test]
-    fn only_complete_unchanged_installations_are_cache_hits() {
-        let dir = tempfile::tempdir().unwrap();
-        let root = dir.path();
-        let digest = "a".repeat(64);
-        assert!(validate_room_chart_cache(root, &digest).is_err());
-        fs::write(root.join("info.yml"), "chart: chart.json\nmusic: song.mp3\nillustration: background.png\n").unwrap();
-        for name in ["chart.json", "song.mp3", "background.png"] {
-            fs::write(root.join(name), b"test").unwrap();
-        }
-        // An arbitrary chart directory is still not a completed installation.
-        assert!(validate_room_chart_cache(root, &digest).is_err());
-        let manifest = cache_manifest(root).unwrap();
-        serde_json::to_writer(File::create(root.join(CACHE_MANIFEST)).unwrap(), &(&digest, manifest)).unwrap();
-        validate_room_chart_cache(root, &digest).unwrap();
-        validate_room_chart_cache(root, &digest).unwrap();
-        assert!(validate_room_chart_cache(root, &"b".repeat(64)).is_err());
-        fs::write(root.join("chart.json"), b"edit").unwrap();
-        assert!(validate_room_chart_cache(root, &digest).is_err());
-        fs::write(root.join("chart.json"), b"test").unwrap();
-        fs::remove_file(root.join("song.mp3")).unwrap();
-        assert!(validate_room_chart_cache(root, &digest).is_err());
-    }
-
-    #[test]
-    fn chart_references_cannot_escape_the_cache() {
-        let dir = tempfile::tempdir().unwrap();
-        fs::write(dir.path().join("info.yml"), "chart: ../outside.json\n").unwrap();
-        assert!(validate_chart_files(dir.path()).is_err());
-    }
-}
-
 /// Extract a checked room chart to a content-addressed folder.
 /// ZIP size and uncompressed size are both bounded to prevent archive bombs.
 fn install_room_chart(bytes: Vec<u8>, digest: String) -> Result<String> {
@@ -297,6 +219,8 @@ impl Message {
     }
 }
 
+type LocalChartTaskResult = (String, u64, std::sync::Weak<Client>);
+
 pub struct MPPanel {
     pub client: Option<Arc<Client>>,
 
@@ -332,7 +256,7 @@ pub struct MPPanel {
 
     download_task: Option<Task<Result<Arc<Chart>>>>,
     downloading: Option<Downloading>,
-    local_chart_task: Option<Task<Result<(String, u64, std::sync::Weak<Client>)>>>,
+    local_chart_task: Option<Task<Result<LocalChartTaskResult>>>,
     local_path: Option<String>,
     local_ready_started: Option<std::time::Instant>,
     // true for request_start, false for ready
@@ -1169,5 +1093,83 @@ impl MPPanel {
     #[inline]
     pub fn next_scene(&mut self) -> Option<NextScene> {
         self.next_scene.take()
+    }
+}
+
+#[cfg(test)]
+mod room_cache_tests {
+    use super::*;
+    use std::io::Write;
+
+    fn archive(files: &[(&str, &[u8])]) -> Vec<u8> {
+        let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        for (name, bytes) in files {
+            zip.start_file(*name, zip::write::SimpleFileOptions::default()).unwrap();
+            zip.write_all(bytes).unwrap();
+        }
+        zip.finish().unwrap().into_inner()
+    }
+
+    #[test]
+    fn atomic_install_reuses_and_repairs_validated_cache() {
+        let dir = tempfile::tempdir().unwrap();
+        let bytes = archive(&[
+            ("info.yml", b"chart: chart.json\nmusic: song.mp3\nillustration: background.png\n"),
+            ("chart.json", b"{}"),
+            ("song.mp3", b"music"),
+            ("background.png", b"image"),
+        ]);
+        let digest = format!("{:x}", Sha256::digest(&bytes));
+        install_room_chart_at(dir.path(), bytes.clone(), &digest).unwrap();
+        validate_room_chart_cache(&dir.path().join(&digest), &digest).unwrap();
+        install_room_chart_at(dir.path(), bytes.clone(), &digest).unwrap();
+        fs::write(dir.path().join(&digest).join("chart.json"), b"modified").unwrap();
+        install_room_chart_at(dir.path(), bytes, &digest).unwrap();
+        validate_room_chart_cache(&dir.path().join(&digest), &digest).unwrap();
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn unsafe_or_incomplete_archives_never_become_cache_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("cache");
+        for bytes in [archive(&[("../outside", b"bad")]), archive(&[("chart.json", b"{}")])] {
+            let digest = format!("{:x}", Sha256::digest(&bytes));
+            assert!(install_room_chart_at(&root, bytes, &digest).is_err());
+            assert!(!root.join(digest).exists());
+            assert_eq!(fs::read_dir(&root).unwrap().count(), 0);
+        }
+        assert!(!dir.path().join("outside").exists());
+    }
+
+    #[test]
+    fn only_complete_unchanged_installations_are_cache_hits() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let digest = "a".repeat(64);
+        assert!(validate_room_chart_cache(root, &digest).is_err());
+        fs::write(root.join("info.yml"), "chart: chart.json\nmusic: song.mp3\nillustration: background.png\n").unwrap();
+        for name in ["chart.json", "song.mp3", "background.png"] {
+            fs::write(root.join(name), b"test").unwrap();
+        }
+        // An arbitrary chart directory is still not a completed installation.
+        assert!(validate_room_chart_cache(root, &digest).is_err());
+        let manifest = cache_manifest(root).unwrap();
+        serde_json::to_writer(File::create(root.join(CACHE_MANIFEST)).unwrap(), &(&digest, manifest)).unwrap();
+        validate_room_chart_cache(root, &digest).unwrap();
+        validate_room_chart_cache(root, &digest).unwrap();
+        assert!(validate_room_chart_cache(root, &"b".repeat(64)).is_err());
+        fs::write(root.join("chart.json"), b"edit").unwrap();
+        assert!(validate_room_chart_cache(root, &digest).is_err());
+        fs::write(root.join("chart.json"), b"test").unwrap();
+        fs::remove_file(root.join("song.mp3")).unwrap();
+        assert!(validate_room_chart_cache(root, &digest).is_err());
+    }
+
+    #[test]
+    fn chart_references_cannot_escape_the_cache() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("info.yml"), "chart: ../outside.json\n").unwrap();
+        assert!(validate_chart_files(dir.path()).is_err());
     }
 }
