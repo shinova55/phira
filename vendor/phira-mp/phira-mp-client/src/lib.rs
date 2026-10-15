@@ -25,6 +25,7 @@ use tracing::{error, trace, warn};
 
 type Callback<T> = Mutex<Option<oneshot::Sender<T>>>;
 type RCallback<T, E = String> = Mutex<Option<oneshot::Sender<Result<T, E>>>>;
+type LocalChartInfoCallback = Mutex<Option<(u32, oneshot::Sender<Result<LocalChartInfo, String>>)>>;
 
 pub const TIMEOUT: Duration = Duration::from_secs(7);
 
@@ -53,7 +54,7 @@ struct State {
     download: std::sync::Mutex<Option<(u32, mpsc::Sender<ServerCommand>)>>,
     next_transfer: AtomicU32,
     chart_epoch: AtomicU64,
-    cb_local_chart_info: Mutex<Option<(u32, oneshot::Sender<Result<LocalChartInfo, String>>)>>,
+    cb_local_chart_info: LocalChartInfoCallback,
     delay: Mutex<Option<Duration>>,
     ping_notify: Notify,
 
