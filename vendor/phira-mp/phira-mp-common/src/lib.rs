@@ -40,7 +40,7 @@ impl ChartSendWindow {
         if offset < self.acknowledged
             || offset > self.sent
             || offset > total
-            || (offset != total && offset as usize % LOCAL_CHART_STREAM_CHUNK_BYTES != 0)
+            || (offset != total && !(offset as usize).is_multiple_of(LOCAL_CHART_STREAM_CHUNK_BYTES))
         {
             bail!("invalid chart acknowledgement");
         }
