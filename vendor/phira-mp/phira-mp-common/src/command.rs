@@ -156,35 +156,125 @@ pub struct LocalChartChunk {
     pub data: Vec<u8>,
 }
 
+#[derive(Debug, Clone, BinaryData)]
+pub struct LocalChartInfo {
+    pub size: u32,
+    pub sha256: String,
+}
+
+impl LocalChartInfo {
+    pub fn validate(&mut self) -> Result<()> {
+        if self.size == 0 || self.size as usize > crate::MAX_LOCAL_CHART_BYTES {
+            bail!("invalid local chart size");
+        }
+        if self.sha256.len() != 64 || !self.sha256.bytes().all(|c| c.is_ascii_hexdigit()) {
+            bail!("invalid chart SHA-256");
+        }
+        self.sha256.make_ascii_lowercase();
+        Ok(())
+    }
+}
+
 #[derive(Debug, BinaryData)]
 pub enum ClientCommand {
     Ping,
 
-    Authenticate { token: Varchar<32> },
-    Chat { message: Varchar<200> },
+    Authenticate {
+        token: Varchar<32>,
+    },
+    Chat {
+        message: Varchar<200>,
+    },
 
-    Touches { frames: Arc<Vec<TouchFrame>> },
-    Judges { judges: Arc<Vec<JudgeEvent>> },
+    Touches {
+        frames: Arc<Vec<TouchFrame>>,
+    },
+    Judges {
+        judges: Arc<Vec<JudgeEvent>>,
+    },
 
-    CreateRoom { id: RoomId },
-    JoinRoom { id: RoomId, monitor: bool },
+    CreateRoom {
+        id: RoomId,
+    },
+    JoinRoom {
+        id: RoomId,
+        monitor: bool,
+    },
     LeaveRoom,
-    LockRoom { lock: bool },
-    CycleRoom { cycle: bool },
+    LockRoom {
+        lock: bool,
+    },
+    CycleRoom {
+        cycle: bool,
+    },
 
-    SelectChart { id: i32 },
+    SelectChart {
+        id: i32,
+    },
     RequestStart,
     Ready,
     CancelReady,
-    Played { id: i32 },
+    Played {
+        id: i32,
+    },
     Abort,
 
     // Appended to preserve the existing official-chart command numbers.
-    StartLocalUpload { name: String, size: u32, sha256: String },
-    LocalUploadChunk { offset: u32, data: Vec<u8> },
+    StartLocalUpload {
+        name: String,
+        size: u32,
+        sha256: String,
+    },
+    LocalUploadChunk {
+        offset: u32,
+        data: Vec<u8>,
+    },
     FinishLocalUpload,
-    FetchLocalChunk { offset: u32 },
-    PlayedLocal { score: i32, accuracy: f32, full_combo: bool },
+    FetchLocalChunk {
+        offset: u32,
+    },
+    PlayedLocal {
+        score: i32,
+        accuracy: f32,
+        full_combo: bool,
+    },
+    GetLocalChartInfo {
+        request_id: u32,
+    },
+    StartLocalChartDownload {
+        transfer_id: u32,
+        expected_sha256: String,
+    },
+    LocalChartDownloadAck {
+        transfer_id: u32,
+        next_offset: u32,
+    },
+    CancelLocalChartDownload {
+        transfer_id: u32,
+    },
+    StartLocalChartUpload {
+        transfer_id: u32,
+        name: String,
+        size: u32,
+        sha256: String,
+    },
+    LocalChartUploadData {
+        transfer_id: u32,
+        offset: u32,
+        data: Vec<u8>,
+    },
+    FinishLocalChartUpload {
+        transfer_id: u32,
+    },
+    CancelLocalChartUpload {
+        transfer_id: u32,
+    },
+    RequestStartLocalChart {
+        expected_sha256: String,
+    },
+    ReadyLocalChart {
+        expected_sha256: String,
+    },
 }
 
 #[derive(Clone, Debug, BinaryData)]
@@ -319,4 +409,10 @@ pub enum ServerCommand {
     FinishLocalUpload(SResult<()>),
     FetchLocalChunk(SResult<LocalChartChunk>),
     PlayedLocal(SResult<()>),
+    LocalChartInfo { request_id: u32, result: SResult<LocalChartInfo> },
+    LocalChartDownloadChunk { transfer_id: u32, offset: u32, data: Vec<u8> },
+    LocalChartDownloadFinished { transfer_id: u32 },
+    LocalChartDownloadError { transfer_id: u32, message: String },
+    LocalChartUploadProgress { transfer_id: u32, result: SResult<u32> },
+    LocalChartUploadVerified { transfer_id: u32, result: SResult<()> },
 }

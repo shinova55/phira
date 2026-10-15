@@ -1,14 +1,13 @@
-use fluent::{FluentArgs, FluentError, FluentResource, bundle::FluentBundle};
+use fluent::{bundle::FluentBundle, FluentArgs, FluentError, FluentResource};
 use fluent_syntax::ast::Pattern;
 use lru::LruCache;
 use once_cell::sync::Lazy;
 use std::{borrow::Cow, cell::RefCell, collections::HashMap, sync::Arc};
 use tracing::error;
-use unic_langid::{LanguageIdentifier, langid};
+use unic_langid::{langid, LanguageIdentifier};
 
 pub static LANGS: [&str; 3] = ["en-US", "zh-CN", "zh-TW"]; // this should be consistent with the macro below (BUNDLES)
-pub static IDENTS: Lazy<[LanguageIdentifier; 3]> =
-    Lazy::new(|| LANGS.map(|it| it.parse().unwrap()));
+pub static IDENTS: Lazy<[LanguageIdentifier; 3]> = Lazy::new(|| LANGS.map(|it| it.parse().unwrap()));
 
 pub struct L10nBundles {
     inner: Vec<FluentBundle<FluentResource, intl_memoizer::concurrent::IntlLangMemoizer>>,
@@ -23,16 +22,7 @@ static BUNDLES: Lazy<L10nBundles> = Lazy::new(|| {
             let mut bundle = FluentBundle::new_concurrent(vec![langid!($locale)]);
             bundle
                 .add_resource(
-                    FluentResource::try_new(
-                        include_str!(concat!(
-                            env!("CARGO_MANIFEST_DIR"),
-                            "/locales/",
-                            $locale,
-                            ".ftl"
-                        ))
-                        .to_owned(),
-                    )
-                    .unwrap(),
+                    FluentResource::try_new(include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/locales/", $locale, ".ftl")).to_owned()).unwrap(),
                 )
                 .unwrap();
             bundle.set_use_isolating(false);
@@ -74,12 +64,7 @@ impl L10nLocal {
         BUNDLES.inner[*id].format_pattern(pattern, args, errors)
     }
 
-    pub fn format<'s>(
-        &mut self,
-        lang: LanguageIdentifier,
-        key: &'static str,
-        args: Option<&'s FluentArgs<'s>>,
-    ) -> Cow<'s, str> {
+    pub fn format<'s>(&mut self, lang: LanguageIdentifier, key: &'static str, args: Option<&'s FluentArgs<'s>>) -> Cow<'s, str> {
         let mut errors = Vec::new();
         let res = self.format_with_errors(lang, key, args, &mut errors);
         for error in errors {

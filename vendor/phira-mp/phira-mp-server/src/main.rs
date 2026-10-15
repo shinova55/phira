@@ -13,8 +13,8 @@ use anyhow::Result;
 use clap::Parser;
 use std::{
     collections::{
-        HashMap,
         hash_map::{Entry, VacantEntry},
+        HashMap,
     },
     net::{Ipv6Addr, SocketAddr},
     path::Path,
@@ -40,9 +40,9 @@ fn vacant_entry<V>(map: &mut HashMap<Uuid, V>) -> VacantEntry<'_, Uuid, V> {
 }
 
 pub fn init_log(file: &str) -> Result<WorkerGuard> {
-    use tracing::{Level, metadata::LevelFilter};
+    use tracing::{metadata::LevelFilter, Level};
     use tracing_log::LogTracer;
-    use tracing_subscriber::{EnvFilter, filter, fmt, prelude::*};
+    use tracing_subscriber::{filter, fmt, prelude::*, EnvFilter};
 
     let log_dir = Path::new("log");
     if log_dir.exists() {
@@ -55,20 +55,11 @@ pub fn init_log(file: &str) -> Result<WorkerGuard> {
 
     LogTracer::init()?;
 
-    let (non_blocking, guard) =
-        tracing_appender::non_blocking(tracing_appender::rolling::hourly(log_dir, file));
+    let (non_blocking, guard) = tracing_appender::non_blocking(tracing_appender::rolling::hourly(log_dir, file));
 
     let subscriber = tracing_subscriber::registry()
-        .with(
-            fmt::layer()
-                .with_writer(non_blocking)
-                .with_filter(LevelFilter::DEBUG),
-        )
-        .with(
-            fmt::layer()
-                .with_writer(std::io::stdout)
-                .with_filter(EnvFilter::from_default_env()),
-        )
+        .with(fmt::layer().with_writer(non_blocking).with_filter(LevelFilter::DEBUG))
+        .with(fmt::layer().with_writer(std::io::stdout).with_filter(EnvFilter::from_default_env()))
         .with(
             filter::Targets::new()
                 .with_target("hyper", Level::INFO)
@@ -85,12 +76,7 @@ pub fn init_log(file: &str) -> Result<WorkerGuard> {
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
 struct Args {
-    #[clap(
-        short,
-        long,
-        default_value_t = 12346,
-        help = "Specify the port number to use for the server"
-    )]
+    #[clap(short, long, default_value_t = 12346, help = "Specify the port number to use for the server")]
     port: u16,
 }
 

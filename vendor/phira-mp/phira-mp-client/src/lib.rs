@@ -3,20 +3,21 @@ pub mod resolver;
 use anyhow::{Context, Error, Result};
 use dashmap::DashMap;
 use phira_mp_common::{
-    ClientCommand, ClientRoomState, JoinRoomResponse, JudgeEvent, LocalChartChunk, Message, RoomId, RoomState, ServerCommand, Stream, TouchFrame,
-    UserInfo, HEARTBEAT_INTERVAL, HEARTBEAT_TIMEOUT, LOCAL_CHART_CHUNK_BYTES, MAX_LOCAL_CHART_BYTES,
+    ChartSendWindow, ClientCommand, ClientRoomState, JoinRoomResponse, JudgeEvent, LocalChartChunk, LocalChartInfo, Message, RoomId, RoomState,
+    ServerCommand, Stream, TouchFrame, UserInfo, HEARTBEAT_INTERVAL, HEARTBEAT_TIMEOUT, LOCAL_CHART_STREAM_CHUNK_BYTES,
+    LOCAL_CHART_STREAM_MAX_CHUNK_BYTES, LOCAL_CHART_STREAM_WINDOW_BYTES, LOCAL_CHART_TRANSFER_TIMEOUT, MAX_LOCAL_CHART_BYTES, PROTOCOL_VERSION,
 };
 use sha2::{Digest, Sha256};
 use std::{
     sync::{
-        atomic::{AtomicU8, Ordering},
+        atomic::{AtomicU32, AtomicU64, AtomicU8, Ordering},
         Arc,
     },
     time::{Duration, Instant},
 };
 use tokio::{
     net::TcpStream,
-    sync::{oneshot, Mutex, Notify, RwLock},
+    sync::{mpsc, oneshot, Mutex, Notify, RwLock},
     task::JoinHandle,
     time,
 };
@@ -48,6 +49,11 @@ impl LivePlayer {
 }
 
 struct State {
+    upload: std::sync::Mutex<Option<(u32, mpsc::Sender<ServerCommand>)>>,
+    download: std::sync::Mutex<Option<(u32, mpsc::Sender<ServerCommand>)>>,
+    next_transfer: AtomicU32,
+    chart_epoch: AtomicU64,
+    cb_local_chart_info: Mutex<Option<(u32, oneshot::Sender<Result<LocalChartInfo, String>>)>>,
     delay: Mutex<Option<Duration>>,
     ping_notify: Notify,
 
@@ -97,6 +103,11 @@ impl Client {
         stream.set_nodelay(true)?;
 
         let state = Arc::new(State {
+            upload: std::sync::Mutex::new(None),
+            download: std::sync::Mutex::new(None),
+            next_transfer: AtomicU32::new(1),
+            chart_epoch: AtomicU64::new(0),
+            cb_local_chart_info: Mutex::default(),
             delay: Mutex::default(),
             ping_notify: Notify::new(),
 
@@ -127,7 +138,7 @@ impl Client {
         });
         let stream = Arc::new(
             Stream::new(
-                Some(1),
+                Some(PROTOCOL_VERSION),
                 stream,
                 Box::new({
                     let state = Arc::clone(&state);
@@ -240,7 +251,11 @@ impl Client {
 
     async fn rcall<R>(&self, payload: ClientCommand, cb: &RCallback<R>) -> Result<R> {
         let (tx, rx) = oneshot::channel();
-        *cb.lock().await = Some(tx);
+        {
+            let mut guard = cb.lock().await;
+            anyhow::ensure!(guard.as_ref().is_none_or(|sender| sender.is_closed()), "RPC already pending");
+            *guard = Some(tx);
+        }
         self.stream.send(payload).await?;
         time::timeout(TIMEOUT, rx).await.context("timeout")??.map_err(Error::msg)
     }
@@ -309,6 +324,9 @@ impl Client {
 
     #[inline]
     pub async fn leave_room(&self) -> Result<()> {
+        self.state.chart_epoch.fetch_add(1, Ordering::SeqCst);
+        self.state.download.lock().unwrap().take();
+        self.state.upload.lock().unwrap().take();
         self.rcall(ClientCommand::LeaveRoom, &self.state.cb_leave_room).await?;
         *self.state.room.write().await = None;
         Ok(())
@@ -334,55 +352,214 @@ impl Client {
     pub async fn upload_local_chart(&self, name: String, bytes: Vec<u8>) -> Result<()> {
         anyhow::ensure!(!bytes.is_empty() && bytes.len() <= MAX_LOCAL_CHART_BYTES, "local chart ZIP exceeds 32 MiB");
         let sha256 = format!("{:x}", Sha256::digest(&bytes));
-        self.rcall(
-            ClientCommand::StartLocalUpload {
+        let id = self
+            .state
+            .next_transfer
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |v| v.checked_add(1))
+            .map_err(|_| Error::msg("transfer IDs exhausted; reconnect"))?;
+        let (tx, mut rx) = mpsc::channel(8);
+        {
+            let mut active = self.state.upload.lock().unwrap();
+            anyhow::ensure!(active.is_none(), "local chart upload already active");
+            *active = Some((id, tx));
+        }
+        struct Cleanup<'a>(&'a Client, u32);
+        impl Drop for Cleanup<'_> {
+            fn drop(&mut self) {
+                let mut active = self.0.state.upload.lock().unwrap();
+                if active.as_ref().is_some_and(|(id, _)| *id == self.1) {
+                    active.take();
+                }
+                let _ = self.0.stream.try_send(ClientCommand::CancelLocalChartUpload { transfer_id: self.1 });
+            }
+        }
+        let _cleanup = Cleanup(self, id);
+        self.stream
+            .send(ClientCommand::StartLocalChartUpload {
+                transfer_id: id,
                 name,
                 size: bytes.len() as u32,
                 sha256,
-            },
-            &self.state.cb_start_local_upload,
-        )
-        .await?;
-        for (index, data) in bytes.chunks(LOCAL_CHART_CHUNK_BYTES).enumerate() {
-            let offset = index * LOCAL_CHART_CHUNK_BYTES;
-            self.rcall(
-                ClientCommand::LocalUploadChunk {
-                    offset: offset as u32,
-                    data: data.to_vec(),
-                },
-                &self.state.cb_local_upload_chunk,
-            )
+            })
             .await?;
-        }
-        self.rcall(ClientCommand::FinishLocalUpload, &self.state.cb_finish_local_upload).await
-    }
-
-    /// Retrieve a host-provided chart from the room, with bounds and checksum verification.
-    pub async fn download_local_chart(&self) -> Result<(Vec<u8>, String)> {
-        let mut bytes = Vec::new();
-        let mut expected_hash: Option<String> = None;
-        let mut total_size: Option<u32> = None;
+        let started = Instant::now();
+        let mut progress = Instant::now();
+        let mut window = ChartSendWindow::default();
+        let mut accepted = false;
+        let mut finishing = false;
+        let mut peak = 0;
         loop {
-            let offset = bytes.len() as u32;
-            let part = self
-                .rcall(ClientCommand::FetchLocalChunk { offset }, &self.state.cb_fetch_local_chunk)
-                .await?;
-            anyhow::ensure!(part.offset == offset, "invalid local chart chunk offset");
-            anyhow::ensure!(part.total_size > 0 && part.total_size as usize <= MAX_LOCAL_CHART_BYTES, "invalid local chart size");
-            anyhow::ensure!(!part.data.is_empty() && part.data.len() <= LOCAL_CHART_CHUNK_BYTES, "invalid local chart chunk");
-            anyhow::ensure!(total_size.is_none_or(|v| v == part.total_size), "local chart size changed while downloading");
-            anyhow::ensure!(expected_hash.as_ref().is_none_or(|v| v == &part.sha256), "local chart checksum changed");
-            total_size = Some(part.total_size);
-            expected_hash = Some(part.sha256);
-            bytes.extend_from_slice(&part.data);
-            anyhow::ensure!(bytes.len() <= part.total_size as usize, "local chart exceeds declared size");
-            if bytes.len() == part.total_size as usize {
-                break;
+            anyhow::ensure!(!self.stream.is_closed(), "connection closed during chart upload");
+            anyhow::ensure!(progress.elapsed() < if accepted { LOCAL_CHART_TRANSFER_TIMEOUT } else { TIMEOUT }, "chart upload stalled");
+            if accepted && !finishing {
+                if let Some(end) = window.next_end(bytes.len() as u32) {
+                    time::timeout(
+                        LOCAL_CHART_TRANSFER_TIMEOUT,
+                        self.stream.send(ClientCommand::LocalChartUploadData {
+                            transfer_id: id,
+                            offset: window.sent,
+                            data: bytes[window.sent as usize..end as usize].to_vec(),
+                        }),
+                    )
+                    .await??;
+                    window.sent = end;
+                    peak = peak.max(window.sent - window.acknowledged);
+                    continue;
+                }
+                if window.acknowledged == bytes.len() as u32 {
+                    self.stream.send(ClientCommand::FinishLocalChartUpload { transfer_id: id }).await?;
+                    finishing = true;
+                }
+            }
+            let packet = tokio::select! {
+                packet = rx.recv() => packet.context("chart upload cancelled")?,
+                _ = time::sleep(Duration::from_millis(250)) => continue,
+            };
+            match packet {
+                ServerCommand::LocalChartUploadProgress { result, .. } => {
+                    let offset = result.map_err(Error::msg)?;
+                    if !accepted {
+                        anyhow::ensure!(offset == 0, "invalid upload acceptance");
+                        accepted = true;
+                        progress = Instant::now();
+                    } else {
+                        let old = window.acknowledged;
+                        window.acknowledge(offset, bytes.len() as u32)?;
+                        if old != offset {
+                            progress = Instant::now();
+                        }
+                    }
+                }
+                ServerCommand::LocalChartUploadVerified { result, .. } => {
+                    anyhow::ensure!(finishing, "premature upload completion");
+                    result.map_err(Error::msg)?;
+                    tracing::info!(seconds = started.elapsed().as_secs_f64(), peak_outstanding_bytes = peak, "chart upload complete");
+                    return Ok(());
+                }
+                _ => anyhow::bail!("unexpected upload packet"),
             }
         }
-        let digest = format!("{:x}", Sha256::digest(&bytes));
-        anyhow::ensure!(expected_hash.as_deref() == Some(digest.as_str()), "local chart SHA-256 mismatch");
-        Ok((bytes, digest))
+    }
+
+    pub fn chart_epoch(&self) -> u64 {
+        self.state.chart_epoch.load(Ordering::SeqCst)
+    }
+
+    pub async fn local_chart_info(&self) -> Result<LocalChartInfo> {
+        let started = Instant::now();
+        let epoch = self.chart_epoch();
+        let id = self
+            .state
+            .next_transfer
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |v| v.checked_add(1))
+            .map_err(|_| Error::msg("transfer IDs exhausted; reconnect"))?;
+        let (tx, rx) = oneshot::channel();
+        {
+            let mut callback = self.state.cb_local_chart_info.lock().await;
+            anyhow::ensure!(callback.as_ref().is_none_or(|(_, sender)| sender.is_closed()), "metadata request already pending");
+            *callback = Some((id, tx));
+        }
+        self.stream.send(ClientCommand::GetLocalChartInfo { request_id: id }).await?;
+        let mut info = time::timeout(TIMEOUT, rx).await.context("chart metadata timeout")??.map_err(Error::msg)?;
+        anyhow::ensure!(self.chart_epoch() == epoch, "chart changed during metadata request");
+        info.validate()?;
+        tracing::info!(milliseconds = started.elapsed().as_millis(), size = info.size, "chart metadata received");
+        Ok(info)
+    }
+
+    pub async fn download_local_chart(&self) -> Result<(Vec<u8>, String)> {
+        self.download_local_chart_with_info(self.local_chart_info().await?).await
+    }
+
+    /// One bounded, unsolicited packet stream per connection, independent of RPC callbacks.
+    pub async fn download_local_chart_with_info(&self, mut info: LocalChartInfo) -> Result<(Vec<u8>, String)> {
+        info.validate()?;
+        let id = self
+            .state
+            .next_transfer
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |v| v.checked_add(1))
+            .map_err(|_| Error::msg("transfer IDs exhausted; reconnect"))?;
+        let (tx, mut rx) = mpsc::channel(LOCAL_CHART_STREAM_WINDOW_BYTES / LOCAL_CHART_STREAM_CHUNK_BYTES + 1);
+        {
+            let mut active = self.state.download.lock().unwrap();
+            anyhow::ensure!(active.is_none(), "local chart download already active");
+            *active = Some((id, tx));
+        }
+        struct Cleanup<'a>(&'a Client, u32);
+        impl Drop for Cleanup<'_> {
+            fn drop(&mut self) {
+                let mut active = self.0.state.download.lock().unwrap();
+                if active.as_ref().is_some_and(|(id, _)| *id == self.1) {
+                    active.take();
+                }
+                let _ = self.0.stream.try_send(ClientCommand::CancelLocalChartDownload { transfer_id: self.1 });
+            }
+        }
+        let _cleanup = Cleanup(self, id);
+        let epoch = self.chart_epoch();
+        self.stream
+            .send(ClientCommand::StartLocalChartDownload {
+                transfer_id: id,
+                expected_sha256: info.sha256.clone(),
+            })
+            .await?;
+        let started = Instant::now();
+        let mut progress = Instant::now();
+        let mut bytes = Vec::with_capacity(info.size as usize);
+        let mut acknowledged = 0usize;
+        loop {
+            anyhow::ensure!(self.chart_epoch() == epoch, "selected chart or room changed");
+            anyhow::ensure!(!self.stream.is_closed(), "multiplayer connection closed during chart transfer");
+            anyhow::ensure!(
+                progress.elapsed() < if bytes.is_empty() { TIMEOUT } else { LOCAL_CHART_TRANSFER_TIMEOUT },
+                "local chart download stalled"
+            );
+            let packet = tokio::select! {
+                packet = rx.recv() => packet.context("local chart transfer cancelled")?,
+                _ = time::sleep(Duration::from_millis(250)) => continue,
+            };
+            match packet {
+                ServerCommand::LocalChartDownloadChunk { offset, data, .. } => {
+                    anyhow::ensure!(offset as usize == bytes.len(), "invalid local chart offset");
+                    let remaining = info.size as usize - bytes.len();
+                    anyhow::ensure!(
+                        !data.is_empty()
+                            && (data.len() == remaining.min(LOCAL_CHART_STREAM_CHUNK_BYTES)
+                                || data.len() == remaining.min(LOCAL_CHART_STREAM_MAX_CHUNK_BYTES)),
+                        "invalid local chart chunk size"
+                    );
+                    if bytes.is_empty() {
+                        tracing::info!(milliseconds = started.elapsed().as_millis(), "chart stream started");
+                    }
+                    bytes.extend_from_slice(&data);
+                    progress = Instant::now();
+                    if bytes.len() - acknowledged >= LOCAL_CHART_STREAM_WINDOW_BYTES / 2 || bytes.len() == info.size as usize {
+                        self.stream
+                            .send(ClientCommand::LocalChartDownloadAck {
+                                transfer_id: id,
+                                next_offset: bytes.len() as u32,
+                            })
+                            .await?;
+                        acknowledged = bytes.len();
+                    }
+                }
+                ServerCommand::LocalChartDownloadFinished { .. } => {
+                    anyhow::ensure!(bytes.len() == info.size as usize, "incomplete local chart download");
+                    let verify = Instant::now();
+                    let digest = format!("{:x}", Sha256::digest(&bytes));
+                    anyhow::ensure!(digest == info.sha256, "local chart SHA-256 mismatch");
+                    tracing::info!(
+                        seconds = started.elapsed().as_secs_f64(),
+                        mib_per_second = bytes.len() as f64 / 1048576.0 / started.elapsed().as_secs_f64(),
+                        verify_ms = verify.elapsed().as_millis(),
+                        "chart download verified"
+                    );
+                    return Ok((bytes, digest));
+                }
+                ServerCommand::LocalChartDownloadError { message, .. } => anyhow::bail!(message),
+                _ => anyhow::bail!("unexpected local chart packet"),
+            }
+        }
     }
 
     pub async fn played_local(&self, score: i32, accuracy: f32, full_combo: bool) -> Result<()> {
@@ -394,6 +571,24 @@ impl Client {
     pub async fn request_start(&self) -> Result<()> {
         self.rcall(ClientCommand::RequestStart, &self.state.cb_request_start).await?;
         self.state.room.write().await.as_mut().unwrap().is_ready = true;
+        Ok(())
+    }
+
+    pub async fn request_start_local_chart(&self, expected_sha256: String) -> Result<()> {
+        self.rcall(ClientCommand::RequestStartLocalChart { expected_sha256 }, &self.state.cb_request_start)
+            .await?;
+        if let Some(room) = self.state.room.write().await.as_mut() {
+            room.is_ready = true;
+        }
+        Ok(())
+    }
+
+    pub async fn ready_local_chart(&self, expected_sha256: String) -> Result<()> {
+        self.rcall(ClientCommand::ReadyLocalChart { expected_sha256 }, &self.state.cb_ready)
+            .await?;
+        if let Some(room) = self.state.room.write().await.as_mut() {
+            room.is_ready = true;
+        }
         Ok(())
     }
 
@@ -447,9 +642,49 @@ impl Drop for Client {
 
 async fn process(state: Arc<State>, cmd: ServerCommand) {
     async fn cb<T>(cb: &Callback<T>, res: T) {
-        let _ = cb.lock().await.take().unwrap().send(res);
+        if let Some(tx) = cb.lock().await.take() {
+            let _ = tx.send(res);
+        }
     }
     match cmd {
+        packet @ (ServerCommand::LocalChartUploadProgress { .. } | ServerCommand::LocalChartUploadVerified { .. }) => {
+            let id = match &packet {
+                ServerCommand::LocalChartUploadProgress { transfer_id, .. } | ServerCommand::LocalChartUploadVerified { transfer_id, .. } => {
+                    *transfer_id
+                }
+                _ => unreachable!(),
+            };
+            let mut active = state.upload.lock().unwrap();
+            if let Some((active_id, tx)) = active.as_ref() {
+                if id == *active_id && tx.try_send(packet).is_err() {
+                    active.take();
+                }
+            }
+        }
+        ServerCommand::LocalChartInfo { request_id, result } => {
+            let mut callback = state.cb_local_chart_info.lock().await;
+            if callback.as_ref().is_some_and(|(id, _)| *id == request_id) {
+                if let Some((_, tx)) = callback.take() {
+                    let _ = tx.send(result);
+                }
+            }
+        }
+        packet @ (ServerCommand::LocalChartDownloadChunk { .. }
+        | ServerCommand::LocalChartDownloadFinished { .. }
+        | ServerCommand::LocalChartDownloadError { .. }) => {
+            let id = match &packet {
+                ServerCommand::LocalChartDownloadChunk { transfer_id, .. }
+                | ServerCommand::LocalChartDownloadFinished { transfer_id }
+                | ServerCommand::LocalChartDownloadError { transfer_id, .. } => *transfer_id,
+                _ => unreachable!(),
+            };
+            let mut active = state.download.lock().unwrap();
+            if let Some((active_id, tx)) = active.as_ref() {
+                if id == *active_id && tx.try_send(packet).is_err() {
+                    active.take();
+                }
+            }
+        }
         ServerCommand::Pong => {
             state.ping_notify.notify_one();
         }
@@ -466,6 +701,10 @@ async fn process(state: Arc<State>, cmd: ServerCommand) {
             state.live_player(player).judge_events.lock().await.extend(judges.iter().cloned());
         }
         ServerCommand::Message(msg) => {
+            if matches!(msg, Message::SelectChart { .. } | Message::SelectLocalChart { .. }) {
+                state.chart_epoch.fetch_add(1, Ordering::SeqCst);
+                state.download.lock().unwrap().take();
+            }
             match msg {
                 Message::LockRoom { lock } => {
                     state.room.write().await.as_mut().unwrap().locked = lock;

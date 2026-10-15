@@ -31,10 +31,8 @@ impl<'a> BinaryReader<'a> {
     }
 
     pub fn take(&mut self, n: usize) -> Result<&'a [u8]> {
-        self.0
-            .get(self.1..(self.1 + n))
-            .ok_or_else(|| anyhow!("unexpected EOF"))
-            .tap_ok(|_| self.1 += n)
+        let end = self.1.checked_add(n).ok_or_else(|| anyhow!("invalid length"))?;
+        self.0.get(self.1..end).ok_or_else(|| anyhow!("unexpected EOF")).tap_ok(|_| self.1 += n)
     }
 
     pub fn read<T: BinaryData>(&mut self) -> Result<T> {
@@ -46,6 +44,9 @@ impl<'a> BinaryReader<'a> {
         let mut shift = 0;
         loop {
             let byte = self.read::<u8>()?;
+            if shift > 63 || (shift == 63 && byte & 0xfe != 0) {
+                return Err(anyhow!("invalid variable-length integer"));
+            }
             result |= ((byte & 0x7f) as u64) << shift;
             if byte & 0x80 == 0 {
                 break Ok(result);

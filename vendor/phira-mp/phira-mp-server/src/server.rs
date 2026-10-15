@@ -1,4 +1,4 @@
-use crate::{IdMap, Room, SafeMap, Session, User, vacant_entry};
+use crate::{vacant_entry, IdMap, Room, SafeMap, Session, User};
 use anyhow::Result;
 use phira_mp_common::RoomId;
 use serde::Deserialize;
@@ -13,7 +13,7 @@ pub struct Chart {
     pub name: String,
 }
 
-/// A partially received, room-scoped private chart (not a public upload).
+/// A partially received, connection-owned private chart (not a public upload).
 pub struct LocalChartUpload {
     pub name: String,
     pub size: u32,
@@ -119,11 +119,7 @@ impl Server {
         let mut guard = self.state.sessions.write().await;
         let entry = vacant_entry(&mut guard);
         let session = Session::new(*entry.key(), stream, Arc::clone(&self.state)).await?;
-        info!(
-            "received connections from {addr} ({}), version: {}",
-            session.id,
-            session.version()
-        );
+        info!("received connections from {addr} ({}), version: {}", session.id, session.version());
         entry.insert(session);
         Ok(())
     }

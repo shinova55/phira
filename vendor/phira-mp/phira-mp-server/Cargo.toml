@@ -27,3 +27,7 @@ uuid = { workspace = true, features = ["v4"] }
 phira-mp-common = { path = "../phira-mp-common" }
 
 sha2 = "0.10"
+
+[dev-dependencies]
+phira-mp-client = { path = "../phira-mp-client" }
+tokio = { workspace = true, features = ["test-util"] }

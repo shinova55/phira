@@ -1,5 +1,5 @@
 inner.rs
-
+vendor/phira-mp/target/
 /target
 /assets/font.ttf
 /cache
@@ -39,4 +39,4 @@ inner.rs
 
 # OHOS
 
-/phira/dist/
+

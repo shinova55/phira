@@ -1326,6 +1326,7 @@ dependencies = [
  "intl-memoizer",
  "lru",
  "once_cell",
+ "phira-mp-client",
  "phira-mp-common",
  "rand 0.10.3",
  "reqwest",
