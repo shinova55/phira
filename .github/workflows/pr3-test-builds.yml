@@ -1,0 +1,151 @@
+name: PR 3 Android Windows and matching server test builds
+
+on:
+  push:
+    branches: [pr-3-test-builds-63353cb]
+    paths: ['.github/workflows/pr3-test-builds.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 63353cb78b8c6807433730be65c269a13a9e75da
+      - name: Install Rust
+        run: |
+          rustup toolchain install
+          rustup target add x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: windows-x64
+          cache-on-failure: 'true'
+      - name: Install static zlib for FFmpeg
+        shell: pwsh
+        run: |
+          & "$env:VCPKG_INSTALLATION_ROOT/vcpkg.exe" install zlib:x64-windows-static-md
+          if ($LASTEXITCODE -ne 0) { throw 'zlib installation failed' }
+          $libdir = "$env:VCPKG_INSTALLATION_ROOT/installed/x64-windows-static-md/lib"
+          $zlib = @(Get-ChildItem "$libdir/*.lib")
+          if ($zlib.Count -ne 1) { throw 'Expected one static zlib library' }
+          Copy-Item $zlib[0].FullName "$libdir/z.lib"
+          "LIB=$libdir;$env:LIB" | Out-File -FilePath $env:GITHUB_ENV -Append
+      - name: Build Windows client with video
+        run: cargo build --locked --release -p phira-main --target x86_64-pc-windows-msvc
+      - name: Test private chart selection
+        run: cargo test --locked --release -p phira --lib --target x86_64-pc-windows-msvc
+      - name: Package portable client
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Invoke-WebRequest 'https://github.com/TeamFlos/phira/releases/download/v0.8.2/Phira-windows-x86_64-v0.8.2.zip' -OutFile template.zip
+          if ((Get-FileHash template.zip -Algorithm SHA256).Hash.ToLowerInvariant() -ne '7a881fd48cd156201d0b1cb700e003fb58cc01ebcfadad1e9c865d0f3282bc41') { throw 'Template checksum mismatch' }
+          Expand-Archive template.zip -DestinationPath template
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item template/assets dist/assets -Recurse
+          Copy-Item assets/* dist/assets -Recurse -Force
+          Copy-Item target/x86_64-pc-windows-msvc/release/phira-main.exe dist/Phira-Private-Charts.exe
+          Copy-Item LICENSE dist/LICENSE
+          Copy-Item docs/windows-test-build.md dist/README.md
+          @('@echo off', 'cd /d "%~dp0"', 'Phira-Private-Charts.exe') | Set-Content dist/Start-Phira.cmd -Encoding ascii
+          git rev-parse HEAD | Set-Content dist/source-commit.txt
+          if (!(Test-Path dist/assets/font.ttf)) { throw 'Missing font' }
+          $exe = [IO.File]::ReadAllBytes((Resolve-Path dist/Phira-Private-Charts.exe))
+          if ($exe[0] -ne 77 -or $exe[1] -ne 90) { throw 'Invalid Windows executable' }
+          $pe = [BitConverter]::ToInt32($exe, 60)
+          if ([BitConverter]::ToUInt16($exe, $pe + 4) -ne 0x8664) { throw 'Expected x64 executable' }
+          (Get-FileHash dist/Phira-Private-Charts.exe -Algorithm SHA256).Hash.ToLowerInvariant() + '  Phira-Private-Charts.exe' | Set-Content dist/SHA256SUMS.txt
+      - name: Include protocol-v2 test instructions
+        run: |
+          python -c "from pathlib import Path; Path('dist/TESTING-PR3.txt').write_text('PR 3 at 63353cb78b8c6807433730be65c269a13a9e75da. Requires the matching protocol-v2 server and updated clients for ALL players. Old release servers are incompatible. Android has a new test certificate: back up data before reinstalling. Official scores remain unavailable. Not a merged or released build.')"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: phira-private-charts-windows-x64-63353cb78b8c6807433730be65c269a13a9e75da
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
+  apk:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      CARGO_TERM_COLOR: always
+      ANDROID_NDK_VERSION: 28.2.13676358
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 63353cb78b8c6807433730be65c269a13a9e75da
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      - name: Install Android tools and Rust
+        run: |
+          sdkmanager 'build-tools;35.0.0' 'platforms;android-35' "ndk;$ANDROID_NDK_VERSION"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION" >> "$GITHUB_ENV"
+          echo "$ANDROID_HOME/build-tools/35.0.0" >> "$GITHUB_PATH"
+          rustup toolchain install
+          rustup target add aarch64-linux-android
+          cargo +stable install cargo-ndk --version 4.1.2 --locked
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: android-arm64
+          cache-on-failure: 'true'
+      - name: Build modified client (including video)
+        run: cargo ndk -t arm64-v8a --platform 26 build --locked --release -p phira --lib
+      - name: Package and test-sign APK
+        run: bash scripts/android/package.sh
+      - name: Include protocol-v2 test instructions
+        run: |
+          python -c "from pathlib import Path; Path('dist/TESTING-PR3.txt').write_text('PR 3 at 63353cb78b8c6807433730be65c269a13a9e75da. Requires the matching protocol-v2 server and updated clients for ALL players. Old release servers are incompatible. Android has a new test certificate: back up data before reinstalling. Official scores remain unavailable. Not a merged or released build.')"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: phira-private-charts-arm64-test-63353cb78b8c6807433730be65c269a13a9e75da
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
+  server:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 63353cb78b8c6807433730be65c269a13a9e75da
+      - name: Install Rust
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: pr3-server
+          workspaces: vendor/phira-mp -> target
+          cache-on-failure: 'true'
+      - name: Build and test matching protocol-v2 server
+        run: |
+          cargo build --locked --release --manifest-path vendor/phira-mp/Cargo.toml -p phira-mp-server
+          cargo test --locked --manifest-path vendor/phira-mp/Cargo.toml --workspace
+      - name: Package and verify Linux server
+        run: |
+          set -euo pipefail
+          mkdir -p dist/package
+          cp vendor/phira-mp/target/release/phira-mp-server dist/package/
+          cp vendor/phira-mp/LICENSE dist/package/
+          cp docs/multiplayer-host-local-charts.md dist/package/README.md
+          git rev-parse HEAD > dist/package/source-commit.txt
+          file dist/package/phira-mp-server
+          file dist/package/phira-mp-server | grep -q 'ELF 64-bit.*x86-64'
+          ldd dist/package/phira-mp-server | tee dist/package/dependencies.txt
+          if grep -q 'not found' dist/package/dependencies.txt; then exit 1; fi
+          (cd dist/package && ./phira-mp-server --help && sha256sum phira-mp-server > SHA256SUMS.txt)
+          tar -czf dist/phira-mp-server-pr3-linux-x64.tar.gz -C dist/package .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: phira-mp-server-pr3-linux-x64-63353cb78b8c6807433730be65c269a13a9e75da
+          path: dist/phira-mp-server-pr3-linux-x64.tar.gz
+          if-no-files-found: error
+          retention-days: 30
