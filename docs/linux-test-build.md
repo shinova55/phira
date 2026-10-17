@@ -13,17 +13,17 @@ Extract the entire tar.gz into a writable folder, open that folder and run
 directory. Full assets are supplemented from the checksum-pinned upstream v0.8.2
 package; its Windows executable is not used.
 
-The separate `phira-mp-server-linux-x64.tar.gz` package is for hosting only.
+The separate `phira-mp-server-only-linux-x64.tar.gz` package is for hosting only.
 Extract it into a writable folder and run `./phira-mp-server --port 12346` there.
 Allow incoming TCP connections on that port as appropriate for your network.
 Players configure Multiplayer Server Address with this host and port.
 The server writes logs in its working directory. There is no automatic service
 installation. The normal Phira account login remains required.
 
-All players need compatible modified clients and the matching modified server.
+All players and the server need protocol v2. The first prerelease is incompatible.
 Transferred charts remain in `mp-local/<SHA-256>`, outside the visible Local
-library; there is no Save to Local. Cached archives still incur transfer/readiness
-waits. Private scores are room-only. Official score submission, including for
+library; there is no Save to Local. Validated cache hits skip archive transfers,
+and the host reuses its uploaded snapshot. Readiness coordination still takes time. Private scores are room-only. Official score submission, including for
 catalogue charts, is unavailable because the public build lacks the closed
 official score-record/attestation implementation.
 

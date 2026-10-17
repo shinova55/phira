@@ -40,8 +40,8 @@ jobs:
           "LIB=$libdir;$env:LIB" | Out-File -FilePath $env:GITHUB_ENV -Append
       - name: Build Windows client with video
         run: cargo build --locked --release -p phira-main --target x86_64-pc-windows-msvc
-      - name: Test private chart selection
-        run: cargo test --locked --release -p phira --lib multiplayer_selection_tests --target x86_64-pc-windows-msvc
+      - name: Test client and chart cache
+        run: cargo test --locked --release -p phira --lib --target x86_64-pc-windows-msvc
       - name: Package portable client
         shell: pwsh
         run: |
@@ -55,9 +55,11 @@ jobs:
           Copy-Item target/x86_64-pc-windows-msvc/release/phira-main.exe dist/Phira-Private-Charts.exe
           Copy-Item LICENSE dist/LICENSE
           Copy-Item docs/windows-test-build.md dist/README.md
-          @('@echo off', 'cd /d "%~dp0"', 'Phira-Private-Charts.exe') | Set-Content dist/Start-Phira.cmd -Encoding ascii
+          @('@echo off', 'cd /d "%~dp0"', 'Phira-Private-Charts.exe', 'set "PHIRA_EXIT=%errorlevel%"', 'if not "%PHIRA_EXIT%"=="0" pause', 'exit /b %PHIRA_EXIT%') | Set-Content dist/Start-Phira.cmd -Encoding ascii
           git rev-parse HEAD | Set-Content dist/source-commit.txt
-          if (!(Test-Path dist/assets/font.ttf)) { throw 'Missing font' }
+          foreach ($font in @('font.ttf', 'bold.ttf', 'phigros.ttf')) {
+            if (!(Test-Path "dist/assets/$font")) { throw "Missing font: $font" }
+          }
           $exe = [IO.File]::ReadAllBytes((Resolve-Path dist/Phira-Private-Charts.exe))
           if ($exe[0] -ne 77 -or $exe[1] -ne 90) { throw 'Invalid Windows executable' }
           $pe = [BitConverter]::ToInt32($exe, 60)

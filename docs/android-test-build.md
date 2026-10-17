@@ -7,7 +7,8 @@ APK shell (the Java Android project is not included in this repository).
 This follows the packaging approach described in the official Android guide:
 https://teamflos.github.io/phira-docs/en/phira_build_guide/Android.html
 
-Download the workflow artifact and extract `phira-private-charts-arm64-test.apk`.
+Install `phira-arm64-test.apk` from the release, or extract
+`phira-private-charts-arm64-test.apk` from an Actions artifact.
 It is optimized for gameplay but signed with an ephemeral Android test key,
 not an official release certificate. No signing secrets are required.
 Signature, ZIP alignment, package metadata, source commit and SHA-256 reports
@@ -28,3 +29,7 @@ transfer private charts. The public-source build does not include the closed
 official score-attestation implementation; official score submission is
 unavailable, including for catalogue charts, as noted in the upstream build guide. Private room scores use the
 branch's room-only reporting. Full two-client gameplay needs device testing.
+
+This version requires matching protocol-v2 clients and server. The first prerelease
+is incompatible. Validated cache hits skip chart downloads; the host reuses its
+uploaded snapshot. Received charts remain outside the visible Local library.

@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: private-mp-first-prerelease
+  group: private-mp-prerelease
   cancel-in-progress: false
 
 jobs:
@@ -60,7 +60,7 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
-      RELEASE_TAG: v0.8.2-private-mp.1
+      RELEASE_TAG: v0.8.2-private-mp.2
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -77,8 +77,8 @@ jobs:
             exit 1
           fi
           gh release create "$RELEASE_TAG" --target "$GITHUB_SHA" --draft --prerelease \
-            --title 'Phira Private Multiplayer 0.8.2 — Testing prerelease 1' \
-            --notes-file docs/releases/v0.8.2-private-mp.1.md
+            --title 'Phira Private Multiplayer 0.8.2 — Protocol v2 — Testing prerelease 2' \
+            --notes-file docs/releases/v0.8.2-private-mp.2.md
           gh release upload "$RELEASE_TAG" release/*
           gh release view "$RELEASE_TAG" --json assets > uploaded-assets.json
           python3 scripts/release/assemble.py --verify-upload uploaded-assets.json

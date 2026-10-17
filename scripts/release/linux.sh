@@ -17,7 +17,7 @@ cp docs/linux-test-build.md "$client/README.md"
 cp docs/multiplayer-host-local-charts.md "$server/README.md"
 printf '#!/bin/sh\nset -eu\ncd -- "$(dirname -- "$0")"\nexec ./phira "$@"\n' > "$client/Start-Phira.sh"
 chmod +x "$client/Start-Phira.sh"
-test -s "$client/assets/font.ttf"
+for font in font.ttf bold.ttf phigros.ttf; do test -s "$client/assets/$font"; done
 for dir in "$client" "$server"; do git rev-parse HEAD > "$dir/source-commit.txt"; done
 for binary in "$client/phira" "$server/phira-mp-server"; do
   file "$binary" | tee -a dist/linux-verification.txt
