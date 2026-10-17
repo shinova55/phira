@@ -14,43 +14,29 @@ This fork of [TeamFlos/Phira](https://github.com/TeamFlos/phira) lets a room hos
 
 ## Download this fork
 
-### Protocol-v2 test builds
-
-These packages were built from the tested PR commit `63353cb`, now merged into `main`:
-
-| Package | Download | How to use |
-| --- | --- | --- |
-| Android ARM64, Android 8+ | [Android artifact](https://github.com/shinova55/phira-custom-mp/actions/runs/38999499315/artifacts/12088184551) | Extract the artifact ZIP and install the APK. Back up data before reinstalling with its new test certificate. |
-| Windows x64 | [Windows artifact](https://github.com/shinova55/phira-custom-mp/actions/runs/38999499315/artifacts/12088244640) | Extract the entire ZIP and run `Start-Phira.cmd`. Keep `assets` beside the executable, including `assets/phigros.ttf`. |
-| Linux x64 multiplayer server | [Matching server artifact](https://github.com/shinova55/phira-custom-mp/actions/runs/38999499315/artifacts/12088458188) | Extract the artifact ZIP, then its tar.gz. On Ubuntu 24.04 x64, run `./phira-mp-server --port 12346` from the extracted folder. |
-
-GitHub sign-in may be required for Actions downloads. These artifacts expire **November 16, 2026**. There is no protocol-v2 Linux game-client package linked here; the Linux package above is the server only. A new tagged release containing PR #3 has not yet been published.
-
-### Previous release (protocol v1)
-
-**[v0.8.2-private-mp.1 — previous testing prerelease](https://github.com/shinova55/phira-custom-mp/releases/tag/v0.8.2-private-mp.1)** remains available for older installations. These packages were built from `5a4516e` and must be used with their matching older server. They do not include PR #3 and must not be mixed with the protocol-v2 packages above. Release downloads do not have the 30-day expiry of Actions artifacts.
+**[v0.8.2-private-mp.2 — protocol-v2 testing prerelease](https://github.com/shinova55/phira-custom-mp/releases/tag/v0.8.2-private-mp.2)** contains the merged PR #3 improvements. All packages were built from commit `4964909`. Release downloads do not have the 30-day expiry of Actions artifacts.
 
 | Platform / package | Download | Installation |
 | --- | --- | --- |
-| Android ARM64, Android 8+ | [APK](https://github.com/shinova55/phira-custom-mp/releases/download/v0.8.2-private-mp.1/phira-arm64-test.apk) | Install the APK; read the signing note below first. |
-| Windows x64 | [Portable ZIP](https://github.com/shinova55/phira-custom-mp/releases/download/v0.8.2-private-mp.1/phira-windows-x64.zip) | Extract the whole ZIP into a writable folder and run `Start-Phira.cmd`. Keep the executable beside `assets`. |
-| Linux x64 client | [Client tar.gz](https://github.com/shinova55/phira-custom-mp/releases/download/v0.8.2-private-mp.1/phira-linux-x64.tar.gz) | Targets Ubuntu 24.04 (glibc 2.39) with a desktop/OpenGL environment. Extract and run `./Start-Phira.sh`; see [dependencies and setup](docs/linux-test-build.md). |
-| Linux x64 multiplayer server | [Server tar.gz](https://github.com/shinova55/phira-custom-mp/releases/download/v0.8.2-private-mp.1/phira-mp-server-only-linux-x64.tar.gz) | For hosting, not playing. Targets Ubuntu 24.04; extract and run `./phira-mp-server --port 12346`. |
+| Android ARM64, Android 8+ | [APK](https://github.com/shinova55/phira-custom-mp/releases/download/v0.8.2-private-mp.2/phira-arm64-test.apk) | Install the APK; read the signing note below first. |
+| Windows x64 | [Portable ZIP](https://github.com/shinova55/phira-custom-mp/releases/download/v0.8.2-private-mp.2/phira-windows-x64.zip) | Extract the entire ZIP and run `Start-Phira.cmd`. Keep the complete `assets` folder, including `phigros.ttf`, beside the executable. The launcher pauses on errors. |
+| Linux x64 client | [Client tar.gz](https://github.com/shinova55/phira-custom-mp/releases/download/v0.8.2-private-mp.2/phira-linux-x64.tar.gz) | Targets Ubuntu 24.04 (glibc 2.39) with a desktop/OpenGL environment. Extract and run `./Start-Phira.sh`; see [dependencies](docs/linux-test-build.md). |
+| Linux x64 multiplayer server | [Server tar.gz](https://github.com/shinova55/phira-custom-mp/releases/download/v0.8.2-private-mp.2/phira-mp-server-only-linux-x64.tar.gz) | For hosting only. Extract and run `./phira-mp-server --port 12346` on Ubuntu 24.04 x64. Restart the old server with this version. |
 
-**Android signing:** the APK uses an ephemeral test certificate and the official package ID. It cannot update an official installation or an earlier test build signed with another key. Back up/export local data before reinstalling, or use a separate Android user/profile. No release-signing secrets are needed. Windows is unsigned. Linux is not an AppImage and requires system libraries; other distributions and older systems are not verified.
+**Update all players and the server together.** The [previous protocol-v1 release](https://github.com/shinova55/phira-custom-mp/releases/tag/v0.8.2-private-mp.1) remains available for older installations but is incompatible with this version. Do not mix its packages with protocol v2.
 
-The [release page](https://github.com/shinova55/phira-custom-mp/releases/tag/v0.8.2-private-mp.1) also includes **Source code (ZIP / tar.gz)** for the tagged client and modified server, [SHA-256 checksums](https://github.com/shinova55/phira-custom-mp/releases/download/v0.8.2-private-mp.1/SHA256SUMS.txt), and [verification reports](https://github.com/shinova55/phira-custom-mp/releases/download/v0.8.2-private-mp.1/verification-reports.zip). Source archives do not contain closed official code or signing keys. Building still downloads external dependencies and upstream assets; Android also uses the upstream APK shell.
+**Android signing:** the APK uses a new ephemeral test certificate and the official package ID. It cannot update the official app or earlier test builds signed with another key, including the PR #3 test APK. Back up/export local data before reinstalling, or use a separate Android user/profile. No release-signing secrets are needed. Windows is unsigned. Linux is not an AppImage and requires system libraries; other distributions and older systems are not verified.
 
-The checksum manifest retains the original build filenames; match entries by platform when checking the renamed downloads. A whole-file `sha256sum --check` against the current release filenames will therefore need those filename entries adjusted first.
+The [release page](https://github.com/shinova55/phira-custom-mp/releases/tag/v0.8.2-private-mp.2) includes **Source code (ZIP / tar.gz)** for the tagged client and modified server, [SHA-256 checksums](https://github.com/shinova55/phira-custom-mp/releases/download/v0.8.2-private-mp.2/SHA256SUMS.txt), and [verification reports](https://github.com/shinova55/phira-custom-mp/releases/download/v0.8.2-private-mp.2/verification-reports.zip). The checksum manifest uses the published download filenames. Source archives exclude closed official code and signing keys; builds still download dependencies and upstream assets, including the Android APK shell.
 
 ### What has been verified
 
-- **Protocol v2 (`63353cb`):** formatting, Clippy on Linux/macOS/iOS, workspace tests and server checks passed. Android and Windows packages and the Linux server were built successfully; downloaded source-commit records, checksums and binary architectures were verified. Android signature/alignment checks passed.
-- The Windows build passed all **6 client tests**; the vendored multiplayer workspace passed **17 tests**. One controlled latency benchmark is intentionally ignored by normal test runs, not a failed test.
-- The user confirmed that the PR #3 builds work and reported the 30-second to 2–4-second loading improvement above. Earlier Windows–Android crossplay was also user-tested. This does not establish coverage of every device, network condition or disconnect/rejoin scenario.
-- **Previous release (`5a4516e`):** all three platform builds and package checks passed, and uploaded files were downloaded back and checksum-verified. Linux game startup was checked under a virtual display; real-device Linux gameplay/crossplay remains unverified. These older release checks are not Linux game validation for protocol v2.
+- All three platform builds, formatting, Clippy on Linux/macOS/iOS, workspace tests, Windows client tests and multiplayer workspace tests passed. Package source commits, checksums and architectures were checked. Android signature/alignment checks passed. Uploaded release files were downloaded back and SHA-256 verified before publication.
+- One controlled latency benchmark is intentionally ignored by normal test runs; it is not a failed test.
+- Linux game startup was checked for 15 seconds under a virtual display with software rendering and a null audio sink. The server opened its TCP listening port. Real-device Linux gameplay/crossplay and audio/performance remain unverified.
+- The user confirmed that the earlier PR #3 Android/Windows test builds work and reported the 30-second to 2–4-second loading improvement above. These newly packaged release binaries have not separately undergone a full real-device multiplayer test. Not every device, network condition or disconnect/rejoin scenario is covered.
 
-See [private multiplayer details](docs/multiplayer-host-local-charts.md) for the current protocol and cache behavior, and the [Windows](docs/windows-test-build.md), [Android](docs/android-test-build.md) and [Linux](docs/linux-test-build.md) notes for platform setup. The score-upload limitation remains unchanged.
+See [private multiplayer details](docs/multiplayer-host-local-charts.md) for the protocol and cache behavior, and the [Windows](docs/windows-test-build.md), [Android](docs/android-test-build.md) and [Linux](docs/linux-test-build.md) notes for platform setup. The score-upload limitation remains unchanged.
 
 ## Share a private chart
 
@@ -94,7 +80,7 @@ Host imports/selects a chart
 
 This is a server-relayed transfer. The server holds the selected archive in room memory while the room exists; it does not publish it to the catalogue or keep a permanent chart library. Only the room host can upload/replace it during chart selection. Authenticated room members can download the current chart. Normal Phira account authentication remains required.
 
-For the prebuilt Linux server, extract the **protocol-v2 server artifact** above into a writable folder, enter that folder, and run:
+For the prebuilt Linux server, extract the **protocol-v2 server package** above into a writable folder, enter that folder, and run:
 
 ```sh
 ./phira-mp-server --port 12346
@@ -106,7 +92,7 @@ The server writes logs in its working directory; the package does not install a 
 cargo run --locked --release --manifest-path vendor/phira-mp/Cargo.toml -p phira-mp-server -- --port 12346
 ```
 
-Allow access to the server port as appropriate for your network, then set **Multiplayer Server Address** in each client to your server's host and port. Use the matching protocol-v2 test server or build current `main` from this repository’s `vendor/phira-mp`; installing an upstream MP server separately will not provide this feature. The server check workflow checks/tests the code; the three-platform prerelease workflow also packages the Linux x64 server.
+Allow access to the server port as appropriate for your network, then set **Multiplayer Server Address** in each client to your server's host and port. Use the matching protocol-v2 release server or build current `main` from this repository’s `vendor/phira-mp`; installing an upstream MP server separately will not provide this feature. The server check workflow checks/tests the code; the three-platform prerelease workflow also packages the Linux x64 server.
 
 See [private multiplayer details](docs/multiplayer-host-local-charts.md) for limits and development checks. Basic private sharing and Windows–Android crossplay have been user-tested, but disconnect recovery, late joins and all device configurations are not comprehensively verified.
 
