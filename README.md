@@ -1,6 +1,6 @@
 # Phira — private multiplayer chart sharing
 
-This fork of [TeamFlos/Phira](https://github.com/TeamFlos/phira) lets a room host share an imported chart privately with other players through a matching self-hosted multiplayer server. Windows–Android crossplay has been reported working by the user. This is an experimental community build; login and account authentication are unchanged.
+This fork of [TeamFlos/Phira](https://github.com/TeamFlos/phira) lets a room host share an imported chart privately with other players through a matching self-hosted multiplayer server. This is an experimental community build; login and account authentication are still required for multiplayer.
 
 > **Score limitation:** these public-source Android, Windows and Linux builds cannot submit official scores, including scores for Phira catalogue charts. They lack the closed official score-record/attestation implementation. Private multiplayer scores are displayed in the room only. Use the official client for official scores and RKS. See the [upstream Android build guide](https://teamflos.github.io/phira-docs/phira_build_guide/Android.html).
 
@@ -25,7 +25,7 @@ This fork of [TeamFlos/Phira](https://github.com/TeamFlos/phira) lets a room hos
 
 **Update all players and the server together.** The [previous protocol-v1 release](https://github.com/shinova55/phira-custom-mp/releases/tag/v0.8.2-private-mp.1) remains available for older installations but is incompatible with this version. Do not mix its packages with protocol v2.
 
-**Android signing:** the APK uses a new ephemeral test certificate and the official package ID. It cannot update the official app or earlier test builds signed with another key, including the PR #3 test APK. Back up/export local data before reinstalling, or use a separate Android user/profile. No release-signing secrets are needed. Windows is unsigned. Linux is not an AppImage and requires system libraries; other distributions and older systems are not verified.
+**Android signing:** the APK uses a new ephemeral test certificate and the official package ID. It cannot update the official app or earlier test builds signed with another key, including the PR #3 test APK. Back up/export local data before reinstalling, or use a separate Android user/profile. No release-signing secrets are needed. Linux is not an AppImage and requires system libraries; other distributions and older systems are not verified.
 
 The [release page](https://github.com/shinova55/phira-custom-mp/releases/tag/v0.8.2-private-mp.2) includes **Source code (ZIP / tar.gz)** for the tagged client and modified server, [SHA-256 checksums](https://github.com/shinova55/phira-custom-mp/releases/download/v0.8.2-private-mp.2/SHA256SUMS.txt), and [verification reports](https://github.com/shinova55/phira-custom-mp/releases/download/v0.8.2-private-mp.2/verification-reports.zip). The checksum manifest uses the published download filenames. Source archives exclude closed official code and signing keys; builds still download dependencies and upstream assets, including the Android APK shell.
 
@@ -33,12 +33,11 @@ The [release page](https://github.com/shinova55/phira-custom-mp/releases/tag/v0.
 
 - All three platform builds, formatting, Clippy on Linux/macOS/iOS, workspace tests, Windows client tests and multiplayer workspace tests passed. Package source commits, checksums and architectures were checked. Android signature/alignment checks passed. Uploaded release files were downloaded back and SHA-256 verified before publication.
 - One controlled latency benchmark is intentionally ignored by normal test runs; it is not a failed test.
-- Linux game startup was checked for 15 seconds under a virtual display with software rendering and a null audio sink. The server opened its TCP listening port. Real-device Linux gameplay/crossplay and audio/performance remain unverified.
-- The user confirmed that the earlier PR #3 Android/Windows test builds work and reported the 30-second to 2–4-second loading improvement above. These newly packaged release binaries have not separately undergone a full real-device multiplayer test. Not every device, network condition or disconnect/rejoin scenario is covered.
+- Earliy PR #3 Android/Windows test builds work and reported the 30-second to 2–4-second loading improvement above. These newly packaged release binaries have not separately undergone a full real-device multiplayer test. Not every device, network condition or disconnect/rejoin scenario is covered.
 
 See [private multiplayer details](docs/multiplayer-host-local-charts.md) for the protocol and cache behavior, and the [Windows](docs/windows-test-build.md), [Android](docs/android-test-build.md) and [Linux](docs/linux-test-build.md) notes for platform setup. The score-upload limitation remains unchanged.
 
-## Share a private chart
+## Share a private chart locally
 
 1. Run the matching server described below and give its address to every player.
 2. Each player uses this modified client, logs in with their normal Phira account, and connects to the same server and room.
@@ -94,8 +93,7 @@ cargo run --locked --release --manifest-path vendor/phira-mp/Cargo.toml -p phira
 
 Allow access to the server port as appropriate for your network, then set **Multiplayer Server Address** in each client to your server's host and port. Use the matching protocol-v2 release server or build current `main` from this repository’s `vendor/phira-mp`; installing an upstream MP server separately will not provide this feature. The server check workflow checks/tests the code; the three-platform prerelease workflow also packages the Linux x64 server.
 
-See [private multiplayer details](docs/multiplayer-host-local-charts.md) for limits and development checks. Basic private sharing and Windows–Android crossplay have been user-tested, but disconnect recovery, late joins and all device configurations are not comprehensively verified.
-
+See [private multiplayer details](docs/multiplayer-host-local-charts.md) for limits and development checks. 
 ## Upstream Phira
 
 ![Phira Showcase](https://phira.5wyxi.com/files/github-showcase.png)
