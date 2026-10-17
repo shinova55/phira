@@ -1,16 +1,16 @@
-use crate::{Chart, LocalChartData, LocalChartUpload, Record, User};
-use anyhow::{Result, bail};
+use crate::{Chart, LocalChartData, Record, User};
+use anyhow::{bail, Result};
 use phira_mp_common::{ClientRoomState, Message, RoomId, RoomState, ServerCommand};
 use rand::seq::IndexedRandom;
 use std::{
     collections::{HashMap, HashSet},
     ops::Deref,
     sync::{
-        Arc, Weak,
         atomic::{AtomicBool, Ordering},
+        Arc, Weak,
     },
 };
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::RwLock;
 use tracing::{debug, info};
 
 const ROOM_MAX_USERS: usize = 8;
@@ -51,7 +51,6 @@ pub struct Room {
     monitors: RwLock<Vec<Weak<User>>>,
     pub chart: RwLock<Option<Chart>>,
     pub local_chart: RwLock<Option<LocalChartData>>,
-    pub local_upload: Mutex<Option<LocalChartUpload>>,
 }
 
 impl Room {
@@ -69,7 +68,6 @@ impl Room {
             monitors: Vec::new().into(),
             chart: RwLock::default(),
             local_chart: RwLock::default(),
-            local_upload: Mutex::default(),
         }
     }
 
@@ -86,10 +84,7 @@ impl Room {
     }
 
     pub async fn client_room_state(&self) -> RoomState {
-        self.state
-            .read()
-            .await
-            .to_client(self.chart.read().await.as_ref().map(|it| it.id))
+        self.state.read().await.to_client(self.chart.read().await.as_ref().map(|it| it.id))
     }
 
     pub async fn client_state(&self, user: &User) -> ClientRoomState {
@@ -113,8 +108,7 @@ impl Room {
     }
 
     pub async fn on_state_change(&self) {
-        self.broadcast(ServerCommand::ChangeState(self.client_room_state().await))
-            .await;
+        self.broadcast(ServerCommand::ChangeState(self.client_room_state().await)).await;
     }
 
     pub async fn add_user(&self, user: Weak<User>, monitor: bool) -> bool {
@@ -136,21 +130,11 @@ impl Room {
     }
 
     pub async fn users(&self) -> Vec<Arc<User>> {
-        self.users
-            .read()
-            .await
-            .iter()
-            .filter_map(|it| it.upgrade())
-            .collect()
+        self.users.read().await.iter().filter_map(|it| it.upgrade()).collect()
     }
 
     pub async fn monitors(&self) -> Vec<Arc<User>> {
-        self.monitors
-            .read()
-            .await
-            .iter()
-            .filter_map(|it| it.upgrade())
-            .collect()
+        self.monitors.read().await.iter().filter_map(|it| it.upgrade()).collect()
     }
 
     pub async fn check_host(&self, user: &User) -> Result<()> {
@@ -167,12 +151,7 @@ impl Room {
 
     pub async fn broadcast(&self, cmd: ServerCommand) {
         debug!("broadcast {cmd:?}");
-        for session in self
-            .users()
-            .await
-            .into_iter()
-            .chain(self.monitors().await.into_iter())
-        {
+        for session in self.users().await.into_iter().chain(self.monitors().await.into_iter()) {
             session.try_send(cmd.clone()).await;
         }
     }
@@ -185,11 +164,7 @@ impl Room {
 
     #[inline]
     pub async fn send_as(&self, user: &User, content: String) {
-        self.send(Message::Chat {
-            user: user.id,
-            content,
-        })
-        .await;
+        self.send(Message::Chat { user: user.id, content }).await;
     }
 
     /// Return: should the room be dropped
@@ -229,8 +204,7 @@ impl Room {
 
     pub async fn reset_game_time(&self) {
         for user in self.users().await {
-            user.game_time
-                .store(f32::NEG_INFINITY.to_bits(), Ordering::SeqCst);
+            user.game_time.store(f32::NEG_INFINITY.to_bits(), Ordering::SeqCst);
         }
     }
 
